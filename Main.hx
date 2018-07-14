@@ -12,6 +12,8 @@ enum Op {
 }
 
 enum Token {
+    TOpen;
+    TClose;
     TOp(op:Op);
     TConst(c:Const);
     TEof;
@@ -22,6 +24,7 @@ enum Expr {
     EBlock( e : Array<Expr> );
     EBinop( op : Op, e1 : Expr, e2 : Expr );
     ETernary( cond : Expr, e1 : Expr, e2 : Expr );
+    ESubModule( e:Expr );
 }
 
 enum EError {
@@ -53,23 +56,18 @@ class Main
 
     var aExprs:Array<Expr>;
     var aTokens:Array<Token>;
-    var idToken:Int;
     var input:String;
 
     function new()
     {
-        this.idToken = 0;
         this.aTokens = [];
         
-        var input = "27 * 35 + 7 ";
-        trace("Evaluating : "+input);
+        var input = " 20 * ( 7 * 5 + 7 - 2 ) - 1 ";
         this.aExprs = parseStream(input);
 
         if( aExprs.length > 0 )
         {
             trace("Parsed, ready for evaluation");
-            trace(aExprs);
-
             for( e in aExprs ) 
                 trace('Eval '+evaluate(e));
         }
@@ -86,7 +84,7 @@ class Main
                     case CInt(i): i;
                     case CFloat(f): f;
                 }
-                
+
             case EBlock( e ):
                 var v = null;
                 for( expr in e )
@@ -94,6 +92,11 @@ class Main
                     v = evaluate(expr);
                 }
                 return v;
+
+            case ESubModule( e2 ):
+            //todo improve context handling here
+                return evaluate(e2);
+
             case EBinop( op, e1, e2 ):
                 var f = switch(op) {
                     case Op.OAdd : function(e1, e2) { return evaluate(e1) + evaluate(e2); };
@@ -113,13 +116,11 @@ class Main
     {
         this.input = stream;
         parseString(stream);
-        trace(aTokens);
         var exprs = [];
         try {
             var e = parseExpr();
             if( e != null ) exprs.push(e);
             else trace("expression was null");
-            trace(exprs);
         } catch( e : Error ) {
             trace("Erreur "+e);
         }
@@ -136,8 +137,22 @@ class Main
             case TEof: return null;
             case TConst(c):
                 return parseNextExpr(EConst(c));
+
+            case TOpen:
+                var e = parseExpr();
+                var next = token();
+                if( next != TClose ) 
+                {
+                    error(EUnexpected('parseExpr::Invalid synthax - Block must be closed with )'));
+                    return null;
+                }
+                else
+                {
+                    return parseNextExpr(ESubModule(e));
+                }
+            
             default : 
-                error(EUnexpected('parseExpr::Invalid synthax - unrecognized grammar at ${aTokens[idToken]}'));
+                error(EUnexpected('parseExpr::Invalid synthax - unrecognized grammar at $t'));
                 return null;
         }
     }
@@ -152,8 +167,8 @@ class Main
             case TOp(op): 
                 return makeOp(op, e, parseExpr());
             default : 
-                error(EUnexpected('parseNextExpr::Invalid synthax - unrecognized grammar at ${aTokens[idToken]}'));
-                return null;
+                pushBack(t);
+                return e;
         }
     }
 
@@ -171,10 +186,8 @@ class Main
                 } else {
                     EBinop(op, e1, e2);                    
                 }
-                
             default :
-                error(EUnexpected('makeOp::Invalid synthax - unrecognized grammar $e2'));
-                null;
+                EBinop(op, e1, e2);
         }
     }
 
@@ -201,14 +214,14 @@ class Main
         return e;
     }
 
-    function token()
+    function pushBack(t)
     {
-        return aTokens[idToken++];
+        aTokens.unshift(t);
     }
 
-    function readToken()
+    function token()
     {
-        return aTokens[idToken];
+        return aTokens.shift();
     }
 
     function parseString(stringExpr:String):Array<Token>
@@ -221,8 +234,7 @@ class Main
 
         while(true)
         {
-            try char = stringExpr.charAt(i) catch(e:Dynamic) { trace("end parsing"); break; }
-            trace(char);
+            try char = stringExpr.charAt(i) catch(e:Dynamic) { break; }
             switch(char)
             {
                 case "": 
@@ -233,6 +245,8 @@ class Main
                     if( !waitMode ) tokens.push( tokenize(token) );
                     waitMode = true;
                     token = "";
+
+                    
                 default:
                     token += char;
                     waitMode = false;
@@ -248,6 +262,8 @@ class Main
     {
         return switch(token)
         {
+            case "(": TOpen;
+            case ")": TClose;
             case "+": TOp(OAdd);
             case "-": TOp(OSubstract);
             case "*": TOp(OMult);
